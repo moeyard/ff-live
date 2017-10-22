@@ -11,7 +11,7 @@ app.use((req,res,next)=>{
 app.ws('/stream',(ws,wq)=>{
   console.log('connection');
 
-  (function(ws){ff.ff_init('hd1080',30,10000000,256000,(chunk)=>{
+  (function(ws){ff.ff_init('hd1080',30,1000000,128000,(chunk)=>{
     if(ws.readyState === 1)
       ws.send(chunk);
     })})(ws);

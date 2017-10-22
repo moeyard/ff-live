@@ -12,7 +12,6 @@ extern "C"{
 #include <libavcodec/avcodec.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
-#include <libavutil/timestamp.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/time.h>
 
@@ -35,15 +34,8 @@ typedef struct {
   AVDictionary    *in_dict[2];
   AVDictionary    *out_dict;
   
-  void * vdat;
-  int    vlen;
-  void * adat;
-  int    alen;
   int64_t vpts;
-  int64_t vbase;
   int64_t apts;
-  int64_t apts_new;
-  int64_t abase;
   int64_t base;
   sendPacketCallback sendPacket;
 } AVCtx;
@@ -51,56 +43,23 @@ typedef struct {
 AVCtx *pAVCtx;
 AVPacket * pPacket[2];
 AVFrame  * pFrame[2];
-char buf[64*1024*4];
-char tmp[64*1024*4];
+char buf[4*1024*4];
+char tmp[4*1024*4];
 int buf_nb=0;
 int stop = 0;
 std::thread * loop[2];
 std::mutex mtx;
 
 
-static int video_read_packet(void *opaque, uint8_t *buf, int buf_size){
-  int ret;
-  AVCtx * pAVCtx = (AVCtx*)opaque;
-  if(buf_size < pAVCtx->vlen){
-    printf("Error io buffer less than data, buf_size = %d, vlen =%d\n", buf_size , pAVCtx->vlen);
-    exit(1);
-  }else{
-    memcpy(buf,pAVCtx->vdat, pAVCtx->vlen);
-    ret = pAVCtx->vlen;
-    pAVCtx->vlen = 0;
-    //根据需要确定是否需要free
-    av_free(pAVCtx->vdat);
-  }
-  return ret;
-}
-
-static int audio_read_packet(void *opaque, uint8_t *buf, int buf_size){
-  int ret;
-  AVCtx * pAVCtx = (AVCtx*)opaque;
-  if(buf_size < pAVCtx->alen){
-    printf("Error io buffer less than data, buf_size = %d, vlen =%d\n", buf_size , pAVCtx->alen);
-    exit(1);
-  }else{
-    memcpy(buf,pAVCtx->adat, pAVCtx->alen);
-    ret = pAVCtx->alen;
-    pAVCtx->alen = 0;
-    //根据需要确定是否需要free
-    free(pAVCtx->adat);
-  }
-  return ret;
-}
 
 void ff_open_video(const char * fmt , const char * url,  const char * video_size, const char * framerate){
   int io_size = IO_SIZE;
   int ret ;
-  //input : h264 (vdat ， vlen)
   pAVCtx->pInputFormatCtx[0] = avformat_alloc_context();
-  //此时会尝试读取 read buffer
   av_dict_set(&pAVCtx->in_dict[0], "video_size", video_size, 0);
   av_dict_set(&pAVCtx->in_dict[0], "framerate", framerate, 0);
   ret = avformat_open_input(&pAVCtx->pInputFormatCtx[0],url,av_find_input_format(fmt),&pAVCtx->in_dict[0]);
-  if(ret != 0) printf("ERROR\n");
+  if(ret != 0) printf("Video ERROR\n");
   pAVCtx->pInputCodec[0] = avcodec_find_decoder(pAVCtx->pInputFormatCtx[0]->streams[0]->codecpar->codec_id);
   pAVCtx->pInputCodecCtx[0] =  avcodec_alloc_context3(pAVCtx->pInputCodec[0]);
   avcodec_parameters_to_context(pAVCtx->pInputCodecCtx[0], pAVCtx->pInputFormatCtx[0]->streams[0]->codecpar);
@@ -112,15 +71,13 @@ void ff_open_video(const char * fmt , const char * url,  const char * video_size
 void ff_open_audio(const char * fmt, const char * url){
   int io_size = IO_SIZE;
   int ret ;
-  //input : aac (adat ， alen)
   pAVCtx->pInputFormatCtx[1] = avformat_alloc_context();
   //for pcm_s16le
   av_dict_set(&pAVCtx->in_dict[1], "sample_rate", "48000", 0);
   av_dict_set(&pAVCtx->in_dict[1], "channels", "2", 0);
   //read first header packet
-  //此时会尝试读取 read buffer
   ret = avformat_open_input(&pAVCtx->pInputFormatCtx[1],url,av_find_input_format(fmt),&pAVCtx->in_dict[1]);
-  if(ret != 0) printf("ERROR\n");
+  if(ret != 0) printf("Audio ERROR\n");
   pAVCtx->pInputCodec[1] = avcodec_find_decoder(pAVCtx->pInputFormatCtx[1]->streams[0]->codecpar->codec_id);
   pAVCtx->pInputCodecCtx[1] =  avcodec_alloc_context3(pAVCtx->pInputCodec[1]);
   avcodec_parameters_to_context(pAVCtx->pInputCodecCtx[1], pAVCtx->pInputFormatCtx[1]->streams[0]->codecpar);
@@ -176,9 +133,7 @@ void ff_init(const char * video_fmt, const char * video_url , const char * audio
   pPacket[1]->size =0;
   pFrame[1] = av_frame_alloc();
 
-  // 设置mp4 key fragment 
   av_dict_set(&pAVCtx->out_dict, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
-  // 设置GOP 为 30 
   av_dict_set(&pAVCtx->out_dict, "g", "30", 0);
   //video output -> h264
   pAVCtx->pOutputCodec[0] = avcodec_find_encoder(AV_CODEC_ID_H264);
@@ -194,7 +149,7 @@ void ff_init(const char * video_fmt, const char * video_url , const char * audio
   pAVCtx->pOutputCodecCtx[0]->height   = height;
   pAVCtx->pOutputCodecCtx[0]->profile  = 110;  //High 10
   pAVCtx->pOutputCodecCtx[0]->level    = 31;   //Level 31
-  pAVCtx->pOutputCodecCtx[0]->flags |= CODEC_FLAG_GLOBAL_HEADER;
+  pAVCtx->pOutputCodecCtx[0]->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
   ret = avcodec_open2(pAVCtx->pOutputCodecCtx[0],NULL,&pAVCtx->out_dict);
 
 
@@ -239,7 +194,6 @@ void ff_init(const char * video_fmt, const char * video_url , const char * audio
   pAVCtx->pOutputFormatCtx=avformat_alloc_context();
   ret = avformat_alloc_output_context2(&pAVCtx->pOutputFormatCtx,NULL,"mp4",NULL);
 
-  //自定义输出IO，设置AVFMT_NOFILE flag
   pAVCtx->pOutputFormatCtx->oformat->flags |= AVFMT_NOFILE;
   //Stream 0 -> video 
   pAVCtx->pStream[0] = avformat_new_stream(pAVCtx->pOutputFormatCtx,pAVCtx->pOutputCodec[0]);
@@ -251,7 +205,6 @@ void ff_init(const char * video_fmt, const char * video_url , const char * audio
   pAVCtx->pStream[1]->codec = pAVCtx->pOutputCodecCtx[1];
   avcodec_parameters_from_context( pAVCtx->pStream[1]->codecpar, pAVCtx->pOutputCodecCtx[1]);
   //av_dump_format(pAVCtx->pOutputFormatCtx,0,NULL,1);
-  //自定义输出IO
   pAVCtx->pOutputFormatCtx->pb =avio_alloc_context((unsigned char *)av_malloc(io_size),io_size, 1 , pAVCtx, NULL , &write_packet, NULL);
   ret  = avformat_write_header(pAVCtx->pOutputFormatCtx,&pAVCtx->out_dict);
   avio_flush(pAVCtx->pOutputFormatCtx->pb);
@@ -261,7 +214,6 @@ void ff_init(const char * video_fmt, const char * video_url , const char * audio
 }
 
 void ff_close(){
-  //文件尾， 只调用一次
   av_write_trailer(pAVCtx->pOutputFormatCtx);
   avio_flush(pAVCtx->pOutputFormatCtx->pb);
 }
@@ -339,7 +291,6 @@ int ff_decode_audio(){
 int ff_encode_video(){
   int ret;
   do{
-  char buf[AV_TS_MAX_STRING_SIZE];
    pFrame[0]->pts = pAVCtx->vpts; //avoid warning
    ret = avcodec_send_frame(pAVCtx->pOutputCodecCtx[0],pFrame[0]);
    if(ret == 0) {
@@ -347,14 +298,11 @@ int ff_encode_video(){
      ret = avcodec_receive_packet(pAVCtx->pOutputCodecCtx[0],pPacket[0]);
      if(ret == 0){
        pPacket[0]->stream_index = pAVCtx->pStream[0]->index;
-       //pPacket[0]->pts = pAVCtx->vpts;
        pPacket[0]->pts = pAVCtx->apts;
        pPacket[0]->dts = pPacket[0]->pts;
        av_packet_rescale_ts(pPacket[0], pAVCtx->pOutputCodecCtx[0]->time_base, pAVCtx->pStream[0]->time_base);
-       //pAVCtx->vpts +=  1;
      }
    }
-    //   pAVCtx->vpts +=  1;
  }while(ret == AVERROR(EAGAIN));
  return ret;
 }
@@ -362,7 +310,6 @@ int ff_encode_video(){
 int ff_encode_audio(){
   int ret;
   do{
-  char buf[AV_TS_MAX_STRING_SIZE];
    pFrame[1]->pts = pAVCtx->apts; //avoid warning
    ret = avcodec_send_frame(pAVCtx->pOutputCodecCtx[1],pFrame[1]);
    if(ret == 0) {
@@ -370,15 +317,11 @@ int ff_encode_audio(){
      ret = avcodec_receive_packet(pAVCtx->pOutputCodecCtx[1],pPacket[1]);
      if(ret == 0){
        pPacket[1]->stream_index = pAVCtx->pStream[1]->index;
-       //pPacket[1]->pts = pAVCtx->apts;
        pPacket[1]->pts = pAVCtx->apts+ 2100000;
        pPacket[1]->dts = pPacket[1]->pts;
        av_packet_rescale_ts(pPacket[1], pAVCtx->pOutputCodecCtx[1]->time_base, pAVCtx->pStream[1]->time_base);
-       //pAVCtx->apts = pAVCtx->apts_new;
-       //pAVCtx->apts +=  1024;
      }
    }
-   //pAVCtx->apts +=  1024;
  }while(ret == AVERROR(EAGAIN));
  return ret;
 }
@@ -387,7 +330,6 @@ int ff_encode_audio(){
 
 int ff_mux_video(){
   int ret;
-  //内容，视频音频一样，每编码一次调用一次
   std::lock_guard<std::mutex> lock(mtx);
   ret = av_interleaved_write_frame(pAVCtx->pOutputFormatCtx,pPacket[0]);
   avio_flush(pAVCtx->pOutputFormatCtx->pb);
@@ -396,7 +338,6 @@ int ff_mux_video(){
 
 int ff_mux_audio(){
   int ret;
-  //内容，视频音频一样，每编码一次调用一次
   std::lock_guard<std::mutex> lock(mtx);
   ret = av_interleaved_write_frame(pAVCtx->pOutputFormatCtx,pPacket[1]);
   avio_flush(pAVCtx->pOutputFormatCtx->pb);

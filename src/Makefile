@@ -12,14 +12,24 @@ INSTALL_PATH := ../
 libff.so:libff.a
 	$(CXX) $(CFLAGS) -shared -Wl,--whole-archive $^ -Wl,--no-whole-archive -lc    $(LDFLAGS)  -o $@    
 
+
+libff.dll:libff.lib
+	$(CXX) $(CFLAGS) -shared -Wl,--whole-archive $^ -Wl,--no-whole-archive     $(LDFLAGS)  -o $@    
+
 libff.a:$(OBJS)
-	$(AR) r $@ $(OBJS) 
+	$(AR) r $@ $^
+
+libff.lib:$(OBJS)
+	$(AR) r $@ $^
 
 test:test.o
 	$(LD) $(CFLAGS)  $^ -o $@ -L. -lff $(LDFLAGS) 
 
 clean:
-	rm -fr libff.so libff.a test $(OBJS)
+	rm -fr libff.lib *.o libff.so libff.dll libff.a test $(OBJS)
 		
 install:libff.so
+	cp -fr $^ $(INSTALL_PATH)
+
+win_install:libff.dll
 	cp -fr $^ $(INSTALL_PATH)

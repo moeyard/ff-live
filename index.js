@@ -1,8 +1,16 @@
 const ffi = require('ffi');
 const ref = require('ref');
 const os = require('os');
+const path = require('path');
+var libname;
+if(os.type == 'LINUX')
+	libname = path.join(__dirname ,  '/libff.so');
+else if(os.type == 'Windows_NT')
+	libname = path.join(__dirname , '/libff.dll');
+else
+    console.log('Not Suport Platform: ' + os.type);
 
-const libff = ffi.Library(__dirname + '/libff.so',{
+var libff = ffi.Library(libname,{
   'ff_init': ['void',['string','string', 'string' , 'string' , 'string', 'int', 'int','int','pointer']],
   'ff_quit': ['void',[]],
   'update_video' : ['int',[]],
@@ -21,7 +29,7 @@ module.exports.ff_init = (video_size,fps, video_rate, audio_rate, sendPacket)=>{
   if(os.type == 'Linux')
     libff.ff_init('x11grab', ':0.0' , 'pulse', 'default' , video_size,fps,video_rate,audio_rate, Callbacks.sendPacket);
   else if(os.type == 'Windows_NT')
-    libff.ff_init('gdigrab', ':desktop' , 'openal', '' , video_size,fps,video_rate,audio_rate, Callbacks.sendPacket);
+    libff.ff_init('gdigrab', 'desktop' , 'openal', '' , video_size,fps,video_rate,audio_rate, Callbacks.sendPacket);
   else{
     console.log('Not Suport Platform: ' + os.type);
     ret = 0;
@@ -59,3 +67,4 @@ module.exports.wait_loop= ()=>{
 process.on('exit',()=>{
   Callbacks;
 });
+
